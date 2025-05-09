@@ -44,7 +44,7 @@ copy app app
 copy system_prompt.txt system_prompt.txt
 copy server.py server.py
 
-expose 80
 expose 6080
+expose 80
 
 entrypoint ["python", "-O", "server.py"]
