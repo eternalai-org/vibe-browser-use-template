@@ -4,7 +4,7 @@
 
 ### 1. Callbacks 
 
-In file `app/callbacks.py` there are two callback functions that can be customized:
+In the file `app/callbacks.py` there are two callback functions that can be customized:
 - on_task_start: trigger once when the agent start running the task (agent loop). 
 - on_task_completed: trigger once when the agent completed the task, before exiting.
 
