@@ -28,8 +28,15 @@ async def get_browser_context():
 
     return await browser.new_context()
 
+_globl_context = None
+
 async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
-    context = await get_browser_context()
+    global _globl_context
+
+    if _globl_context is None:
+        _globl_context = await get_browser_context()
+
+    context = _globl_context
     controller = get_controler()
     system_prompt = get_system_prompt()
 

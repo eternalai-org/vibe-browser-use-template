@@ -47,4 +47,11 @@ copy server.py server.py
 expose 6080
 expose 80
 
+env OPENAI_BASE_URL="http://localmodel:65534/v1"
+env OPENAI_API_KEY="no-need"
+
+env LLM_BASE_URL="http://localmodel:65534/v1"
+env LLM_API_KEY="no-need"
+env LLM_MODEL_ID="no-need"
+
 entrypoint ["python", "-O", "server.py"]
