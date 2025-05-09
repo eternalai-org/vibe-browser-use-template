@@ -1,0 +1,6 @@
+browser-use
+fastapi[standard]
+pydantic
+playwright
+python-dotenv
+json-repair
