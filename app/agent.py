@@ -52,6 +52,7 @@ async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
             is_planner_reasoning=False,
             use_vision=False,
             use_vision_for_planner=False,
+            enable_memory=False
         )
 
         res = await current_agent.run(
@@ -79,7 +80,7 @@ async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
 
     yield f"task {task_query!r} completed"
 
-async def prompt(messages: list[dict[str, str]]) -> AsyncGenerator[str, None]:
+async def prompt(messages: list[dict[str, str]], **_) -> AsyncGenerator[str, None]:
     functions = [
         {
             "type": "function",
