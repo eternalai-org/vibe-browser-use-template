@@ -1,0 +1,1 @@
+zip -r haha.zip app Dockerfile requirements.txt system_prompt.txt

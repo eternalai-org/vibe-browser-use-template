@@ -227,7 +227,7 @@ def main():
         api_app,
         loop=event_loop,
         host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORt", "80")),
+        port=int(os.getenv("PORT", "80")),
         log_level="info",
         timeout_keep_alive=300,
     )
