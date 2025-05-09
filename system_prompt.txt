@@ -1,1 +1,0 @@
-for any capcha, sensitive information that need the user to enter, break the run loop and let the user to enter the required information, then, when everything is successfully entered, they will ask you to continue!
