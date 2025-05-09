@@ -1,4 +1,4 @@
-from python:3.12
+from python:3.11
 
 env DEBIAN_FRONTEND=noninteractive
 env DISPLAY=:99
@@ -37,11 +37,12 @@ run git clone https://github.com/novnc/noVNC.git /opt/novnc && \
     chmod +x /opt/novnc/utils/novnc_proxy
 
 copy requirements.txt .
-run pip install -r requirements.txt --no-cache-dir && playwright install
+run pip install -r requirements.txt --no-cache-dir && patchright install chromium
+workdir /workspace
 
-copy app app .
+copy app app
 copy system_prompt.txt system_prompt.txt
-copy server.py .
+copy server.py server.py
 
 expose 80
 expose 6080
