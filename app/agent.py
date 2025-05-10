@@ -40,7 +40,7 @@ async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[st
         is_planner_reasoning=False,
         use_vision=True,
         use_vision_for_planner=True,
-        enable_memory=True
+        enable_memory=False
     )
 
     res = await current_agent.run(

@@ -21,6 +21,7 @@ import time
 import uuid
 import openai
 from browser_use import Browser, BrowserConfig
+from browser_use.browser.context import BrowserContextConfig
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +75,18 @@ async def lifespan(app: fastapi.FastAPI):
         browser = Browser(
             config=BrowserConfig(
                 headless=False,
-                disable_security=True
+                disable_security=True,
+                new_context_config=BrowserContextConfig(
+                    allowed_domains=["*"],
+                    cookies_file=None,
+                    maximum_wait_page_load_time=60,
+                    disable_security=True,
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
+                    viewport=dict(
+                        width=BROWSER_WINDOW_SIZE_WIDTH,
+                        height=BROWSER_WINDOW_SIZE_HEIGHT
+                    )
+                )
             )
         )
 
