@@ -38,9 +38,9 @@ async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[st
         extend_system_message=system_prompt,
 
         is_planner_reasoning=False,
-        use_vision=False,
-        use_vision_for_planner=False,
-        enable_memory=False
+        use_vision=True,
+        use_vision_for_planner=True,
+        enable_memory=True
     )
 
     res = await current_agent.run(
