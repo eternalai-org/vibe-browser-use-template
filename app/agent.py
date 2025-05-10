@@ -27,7 +27,7 @@ async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[st
         openai_api_base=os.getenv("LLM_BASE_URL", 'http://localhost:65534/v1'),
         openai_api_key=os.getenv("LLM_API_KEY", 'no-need'),
     )
-    
+
     current_agent = Agent(
         task=task_query,
         llm=model,

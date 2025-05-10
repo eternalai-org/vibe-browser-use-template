@@ -76,6 +76,10 @@ async def lifespan(app: fastapi.FastAPI):
             config=BrowserConfig(
                 headless=False,
                 disable_security=True,
+                extra_browser_args=[
+                    "--start-maximized",
+                    "--homepage=https://www.google.com",
+                ],
                 new_context_config=BrowserContextConfig(
                     allowed_domains=["*"],
                     cookies_file=None,
