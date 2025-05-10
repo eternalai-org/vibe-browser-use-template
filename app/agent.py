@@ -1,6 +1,4 @@
-from typing import Generator, AsyncGenerator
-from functools import lru_cache
-from browser_use import Agent
+from typing import AsyncGenerator
 from langchain_openai import ChatOpenAI
 import os
 from .callbacks import (
@@ -8,7 +6,8 @@ from .callbacks import (
     on_task_start
 )
 
-from browser_use import Browser, BrowserConfig
+from browser_use import Agent
+from browser_use.browser.context import BrowserContext
 from .controllers import get_controler
 from .models import browser_use_custom_models
 from .utils import get_system_prompt, repair_json_no_except
@@ -18,25 +17,8 @@ import json
 
 logger = logging.getLogger()
 
-@lru_cache(maxsize=1)
-async def get_browser_context():
-    browser = Browser(
-		config=BrowserConfig(
-            # cdp_url=os.environ['CDP_URL']
-        )
-    )
+async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[str, None]:
 
-    return await browser.new_context()
-
-_globl_context = None
-
-async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
-    global _globl_context
-
-    if _globl_context is None:
-        _globl_context = await get_browser_context()
-
-    context = _globl_context
     controller = get_controler()
     system_prompt = get_system_prompt()
 
@@ -46,27 +28,26 @@ async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
         openai_api_key=os.getenv("LLM_API_KEY", 'no-need'),
     )
     
-    async with context as ctx:
-        current_agent = Agent(
-            task=task_query,
-            llm=model,
-            page_extraction_llm=model,
-    		planner_llm=model,
-            browser_context=context,
-            controller=controller,
-            extend_system_message=system_prompt,
+    current_agent = Agent(
+        task=task_query,
+        llm=model,
+        page_extraction_llm=model,
+        planner_llm=model,
+        browser_context=ctx,
+        controller=controller,
+        extend_system_message=system_prompt,
 
-            is_planner_reasoning=False,
-            use_vision=False,
-            use_vision_for_planner=False,
-            enable_memory=False
-        )
+        is_planner_reasoning=False,
+        use_vision=False,
+        use_vision_for_planner=False,
+        enable_memory=False
+    )
 
-        res = await current_agent.run(
-            max_steps=40,
-            on_step_start=on_task_start, 
-            on_step_end=on_task_completed
-        )
+    res = await current_agent.run(
+        max_steps=40,
+        on_step_start=on_task_start, 
+        on_step_end=on_task_completed
+    )
 
     final_result = res.final_result()
 
@@ -87,13 +68,13 @@ async def browse(task_query: str, **_) -> AsyncGenerator[str, None]:
 
     yield f"task {task_query!r} completed"
 
-async def prompt(messages: list[dict[str, str]], **_) -> AsyncGenerator[str, None]:
+async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext, **_) -> AsyncGenerator[str, None]:
     functions = [
         {
             "type": "function",
             "function": {
                 "name": "xbrowser",
-                "description": "Ask the XBrowser to complete the browsing task as you cannot!",
+                "description": "Ask the XBrowser to complete the browsing task, as you cannot!",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -139,7 +120,7 @@ async def prompt(messages: list[dict[str, str]], **_) -> AsyncGenerator[str, Non
                 compose_task += desc + '\n'
 
         if compose_task:
-            async for msg in browse(task_query=compose_task):
+            async for msg in browse(task_query=compose_task, ctx=browser_context):
                 yield msg
             
             
