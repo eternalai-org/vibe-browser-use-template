@@ -10,7 +10,7 @@ from browser_use import Agent
 from browser_use.browser.context import BrowserContext
 from .controllers import get_controler
 from .models import browser_use_custom_models
-from .utils import get_system_prompt, repair_json_no_except
+from .utils import get_system_prompt, repair_json_no_except, refine_chat_history
 import logging
 import openai
 import json
@@ -98,7 +98,7 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
 
     completion = await llm.chat.completions.create(
         model=os.getenv("LLM_MODEL_ID", 'local-llm'),
-        messages=messages,
+        messages=await refine_chat_history(messages, get_system_prompt()),
         tools=functions,
         tool_choice="auto",
         max_tokens=256
