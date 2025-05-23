@@ -5,12 +5,11 @@ import logging
 import datetime
 import os
 import base64
-from .models.oai_compatible_models import ChatCompletionStreamResponse
-import json
-import time
-from typing import Any
-from pydantic import BaseModel
 import uuid
+from .models.oai_compatible_models import ChatCompletionStreamResponse
+import time
+import json
+
 
 logger = logging.getLogger()
 
@@ -75,6 +74,7 @@ async def refine_chat_history(messages: list[dict[str, str]], system_prompt: str
         if isinstance(message, dict) and message.get('role', 'undefined') == 'system':
             message['content'] += f'\n{system_prompt}'
             has_system_prompt = True
+            refined_messages.append(message)
             continue
     
         if isinstance(message, dict) \
@@ -131,29 +131,18 @@ async def refine_chat_history(messages: list[dict[str, str]], system_prompt: str
 
     return refined_messages
 
-async def to_chunk_data(chunk: ChatCompletionStreamResponse) -> bytes:
-    return ("data: " + json.dumps(chunk.model_dump()) + "\n\n").encode()
 
-async def done_token() -> bytes:
-    return "data: [DONE]\n\n".encode()
+async def refine_assistant_message(
+    assistant_message: dict[str, str]
+) -> dict[str, str]:
 
-async def refine_mcp_response(something: Any) -> str:
-    if isinstance(something, dict):
-        return {
-            k: await refine_mcp_response(v)
-            for k, v in something.items()
-        }
+    if 'content' in assistant_message:
+        assistant_message['content'] = assistant_message['content'] or ""
 
-    elif isinstance(something, (list, tuple)):
-        return [
-            await refine_mcp_response(v)
-            for v in something
-        ]
+    return assistant_message
 
-    elif isinstance(something, BaseModel):
-        return something.model_dump()
-
-    return something
+def random_uuid() -> str:
+    return str(uuid.uuid4())
 
 async def wrap_chunk(uuid: str, raw: str, role="assistant") -> ChatCompletionStreamResponse:
     return ChatCompletionStreamResponse(
@@ -171,15 +160,6 @@ async def wrap_chunk(uuid: str, raw: str, role="assistant") -> ChatCompletionStr
             )
         ]
     )
-    
-async def refine_assistant_message(
-    assistant_message: dict[str, str]
-) -> dict[str, str]:
 
-    if 'content' in assistant_message:
-        assistant_message['content'] = assistant_message['content'] or ""
-
-    return assistant_message
-    
-def random_uuid() -> str:
-    return str(uuid.uuid4())
+async def to_chunk_data(chunk: ChatCompletionStreamResponse) -> bytes:
+    return ("data: " + json.dumps(chunk.model_dump()) + "\n\n").encode()

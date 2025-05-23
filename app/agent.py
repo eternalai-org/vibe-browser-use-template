@@ -5,14 +5,14 @@ from .callbacks import (
     on_task_completed, 
     on_task_start
 )
+import traceback
+import httpx
 
 from browser_use import Agent
 from browser_use.browser.context import BrowserContext
-from .controllers import get_controler, check_authorization, ensure_url
-from .signals import UnauthorizedAccess
-from .models import browser_use_custom_models
-from .utils import get_system_prompt, repair_json_no_except, refine_chat_history, refine_assistant_message, random_uuid, to_chunk_data, wrap_chunk
-
+from .controllers import get_controler
+from .models import browser_use_custom_models, oai_compatible_models
+from .utils import get_system_prompt, repair_json_no_except, refine_chat_history, to_chunk_data, refine_assistant_message, wrap_chunk, random_uuid
 import logging
 import openai
 import json
@@ -210,6 +210,30 @@ async def execute_openai_compatible_toolcall(
 
     yield f"Unknown tool call: {name}; Available tools are: get_markets, place_order"
 
+    yield f"task {task_query!r} completed"
+    
+
+async def execute_openai_compatible_toolcall(
+    ctx: BrowserContext,
+    name: str,
+    args: dict[str, str]
+) -> AsyncGenerator[str, None]:
+    logger.info(f"Executing tool call: {name} with args: {args}")
+    
+    if name == "xbrowse":
+        task = args.get("task", "")
+
+        if not task:
+            yield "No task provided for xbrowse tool call."
+            return
+
+        async for msg in browse(task, ctx):
+            yield msg
+            
+        return
+
+    yield f"Unknown tool call: {name}; only xbrowse is available."
+
 
 async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext, **_) -> AsyncGenerator[str, None]:
     functions = [
@@ -302,18 +326,16 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
     ]
 
     llm = openai.AsyncClient(
-        base_url=os.getenv("LLM_BASE_URL", "http://localhost:65534/v1"),
+        base_url=os.getenv("LLM_BASE_URL", "http://localmodel:65534/v1"),
         api_key=os.getenv("LLM_API_KEY", "no-need")
     )
 
+    messages = await refine_chat_history(messages, get_system_prompt())
+    
     response_uuid = random_uuid()
-
     error_details = ''
     error_message = ''
     calls = 0
-    
-    messages = await refine_chat_history(messages, get_system_prompt())
-    executed = set([])
 
     try:
         completion = await llm.chat.completions.create(
@@ -321,29 +343,33 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
             messages=messages,
             tools=functions,
             tool_choice="auto",
-            max_tokens=512
+            max_tokens=256
         )
-
+        
         if completion.choices[0].message.content:
             yield completion.choices[0].message.content
 
         messages.append(await refine_assistant_message(completion.choices[0].message.model_dump()))
-
-        logger.info(f"Tool calls length: {len(completion.choices[0].message.tool_calls)}")
-
+        
         while completion.choices[0].message.tool_calls is not None and len(completion.choices[0].message.tool_calls) > 0:
             calls += len(completion.choices[0].message.tool_calls)
-
+            executed = set([])
+            
             for call in completion.choices[0].message.tool_calls:
                 _id, _name = call.id, call.function.name    
                 _args = json.loads(call.function.arguments)
-                result, unauthorized = '', False
-                
-                if _name in executed:
+                result, has_exception = '', False
+                identity = _name + call.function.arguments
+
+                if identity in executed:
                     result = f"Tool call `{_name}` has been executed before with the same arguments: {_args}. Skipping"
-                    
+
+                elif has_exception:
+                    result = f"Exception raised. Skipping task...\n"
+
                 else:
-                    executed.add(_name)
+                    executed.add(identity)
+
                     yield await to_chunk_data(
                         await wrap_chunk(
                             response_uuid,
@@ -353,36 +379,29 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                     )
 
                     try:
-
                         async for msg in execute_openai_compatible_toolcall(
                             ctx=browser_context, 
                             name=_name,
                             args=_args
                         ):
-                            yield await to_chunk_data(
-                                await wrap_chunk(
-                                    response_uuid,
-                                    msg,
-                                    role="tool"
-                                )
-                            )
+                            yield msg
 
                             if isinstance(msg, str):
                                 result += msg + '\n'
 
-                    except UnauthorizedAccess as e:
-                        logger.warning(f"{e}")
+                    except Exception as e:
+                        logger.error(f"{e}", exc_info=True)
 
                         yield await to_chunk_data(
                             await wrap_chunk(
                                 response_uuid,
-                                f"Required log-in first. Pausing...\n",
+                                f"Exception raised. Pausing...\n",
                                 role="tool"
                             )
                         )
-    
-                        result = f"Unauthorized access: {str(e)}\nNow, halt the current task and wait for the user to sign in manually. After then, Re-execute {_name} with these arguments: {_args}" 
-                        unauthorized = True
+
+                        result = f"Something went wrong, ask the user to solve it manually and notify you again once when it is resolved. After then, Re-execute {_name} with these arguments: {_args}" 
+                        has_exception = True
 
                 messages.append(
                     {
@@ -392,10 +411,10 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                     }
                 )
 
-                if unauthorized:
-                    break
+                if has_exception:
+                    break 
 
-            need_toolcalls = calls < 10 and not unauthorized
+            need_toolcalls = calls < 10 and not has_exception
 
             completion = await llm.chat.completions.create(
                 messages=messages,
@@ -411,7 +430,7 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                 yield completion.choices[0].message.content
 
             messages.append(await refine_assistant_message(completion.choices[0].message.model_dump()))
-
+      
     except openai.APIConnectionError as e:
         error_message=f"Failed to connect to language model: {e}"
         error_details = traceback.format_exc(limit=-6)
