@@ -11,6 +11,8 @@ import os
 from contextlib import asynccontextmanager
 import sys
 from typing import Union
+from patchright.async_api import async_playwright as async_patchright
+
 from app.models.oai_compatible_models import (
     ChatCompletionStreamResponse, 
     PromptErrorResponse
@@ -22,6 +24,7 @@ import uuid
 import openai
 from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
+
 
 logger = logging.getLogger(__name__)
 
@@ -74,11 +77,15 @@ async def lifespan(app: fastapi.FastAPI):
 
         browser = Browser(
             config=BrowserConfig(
+                # cdp_url='wss://browser.zenrows.com?apikey=972a1e7be909dfa64eeede10a97e958823fdfa6d',
+                # playwright=await async_patchright().start(),
+		        # user_data_dir='~/.config/browseruse/profiles/stealth',
+		        disable_security=False,
+		        deterministic_rendering=False,
                 headless=False,
-                disable_security=True,
                 extra_browser_args=[
                     "--start-maximized",
-                    "--homepage=https://www.google.com",
+                    "--homepage=https://www.amazon.com",
                 ],
                 new_context_config=BrowserContextConfig(
                     allowed_domains=["*"],
@@ -94,6 +101,9 @@ async def lifespan(app: fastapi.FastAPI):
             )
         )
 
+        # await browser.start()
+        # await browser.create_new_tab('https://www.amazon.com')
+        # await asyncio.sleep(5)
         ctx = await browser.new_context() 
 
         _GLOBALS['browser'] = browser
