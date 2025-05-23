@@ -154,7 +154,10 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
 
                 if identity in executed:
                     result = f"Tool call `{_name}` has been executed before with the same arguments: {_args}. Skipping"
-                    
+
+                elif has_exception:
+                    result = f"Exception raised. Skipping task...\n"
+
                 else:
                     executed.add(identity)
 
@@ -178,7 +181,7 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                                 result += msg + '\n'
 
                     except Exception as e:
-                        logger.warning(f"{e}")
+                        logger.error(f"{e}", exc_info=True)
 
                         yield await to_chunk_data(
                             await wrap_chunk(
@@ -202,22 +205,22 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                 if has_exception:
                     break 
 
-                need_toolcalls = calls < 10 and not has_exception
+            need_toolcalls = calls < 10 and not has_exception
 
-                completion = await llm.chat.completions.create(
-                    messages=messages,
-                    model=os.getenv("LLM_MODEL_ID", 'local-llm'),
-                    tools=functions if need_toolcalls else openai._types.NOT_GIVEN,  # type: ignore
-                    tool_choice="auto" if need_toolcalls else openai._types.NOT_GIVEN,  # type: ignore
-                    max_tokens=512
-                )
+            completion = await llm.chat.completions.create(
+                messages=messages,
+                model=os.getenv("LLM_MODEL_ID", 'local-llm'),
+                tools=functions if need_toolcalls else openai._types.NOT_GIVEN,  # type: ignore
+                tool_choice="auto" if need_toolcalls else openai._types.NOT_GIVEN,  # type: ignore
+                max_tokens=512
+            )
 
-                logger.info(f"Assistant: {completion.choices[0].message.content!r}")
+            logger.info(f"Assistant: {completion.choices[0].message.content!r}")
 
-                if completion.choices[0].message.content:
-                    yield completion.choices[0].message.content
+            if completion.choices[0].message.content:
+                yield completion.choices[0].message.content
 
-                messages.append(await refine_assistant_message(completion.choices[0].message.model_dump()))
+            messages.append(await refine_assistant_message(completion.choices[0].message.model_dump()))
       
     except openai.APIConnectionError as e:
         error_message=f"Failed to connect to language model: {e}"
