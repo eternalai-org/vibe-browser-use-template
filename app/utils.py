@@ -5,6 +5,11 @@ import logging
 import datetime
 import os
 import base64
+import uuid
+from .models.oai_compatible_models import ChatCompletionStreamResponse
+import time
+import json
+
 
 logger = logging.getLogger()
 
@@ -69,6 +74,7 @@ async def refine_chat_history(messages: list[dict[str, str]], system_prompt: str
         if isinstance(message, dict) and message.get('role', 'undefined') == 'system':
             message['content'] += f'\n{system_prompt}'
             has_system_prompt = True
+            refined_messages.append(message)
             continue
     
         if isinstance(message, dict) \
@@ -124,3 +130,36 @@ async def refine_chat_history(messages: list[dict[str, str]], system_prompt: str
     # refined_messages[-1]['content'] += f'\nCurrent time is {current_time_utc_str} UTC'
 
     return refined_messages
+
+
+async def refine_assistant_message(
+    assistant_message: dict[str, str]
+) -> dict[str, str]:
+
+    if 'content' in assistant_message:
+        assistant_message['content'] = assistant_message['content'] or ""
+
+    return assistant_message
+
+def random_uuid() -> str:
+    return str(uuid.uuid4())
+
+async def wrap_chunk(uuid: str, raw: str, role="assistant") -> ChatCompletionStreamResponse:
+    return ChatCompletionStreamResponse(
+        id=uuid,
+        object='chat.completion.chunk',
+        created=int(time.time()),
+        model='unspecified',
+        choices=[
+            dict(
+                index=0,
+                delta=dict(
+                    content=raw,
+                    role=role
+                )
+            )
+        ]
+    )
+
+async def to_chunk_data(chunk: ChatCompletionStreamResponse) -> bytes:
+    return ("data: " + json.dumps(chunk.model_dump()) + "\n\n").encode()
