@@ -125,16 +125,16 @@ async def execute_openai_compatible_toolcall(
 ) -> AsyncGenerator[str, None]:
     logger.info(f"Executing tool call: {name} with args: {args}")
 
-    # if name == "get_markets":
+    if name == "get_markets":
     #     # Implement get_markets tool call here
 
-    #     # check if the user is on the right page
-    #     # if not, then go to the right page
-    #     await ensure_url(ctx, 'https://amazon.com')
+        # check if the user is on the right page
+        # if not, then go to the right page
+        await ensure_url(ctx, 'https://amazon.com')
 
-    #     task = f"Find the market from user request: {args}"
-    #     async for msg in browse(task, ctx):
-    #         yield msg
+        task = f"Find the market from user request: {args}"
+        async for msg in browse(task, ctx):
+            yield msg
 
 
     #     # keyword = args.get("keywords", None)
@@ -193,16 +193,16 @@ async def execute_openai_compatible_toolcall(
     #     # yield "get_markets tool is not yet implemented."
     #     return
 
-    # if name == "place_order":
-    #     # Implement place_order tool call here
+    if name == "place_order":
+        # Implement place_order tool call here
 
-    #     # check if the user is on the right page
-    #     # if not, then go to the right page
-    #     await ensure_url(ctx, 'https://amazon.com')
+        # check if the user is on the right page
+        # if not, then go to the right page
+        await ensure_url(ctx, 'https://amazon.com')
 
-    #     task = "Find the market from user request"
-    #     async for msg in browse(task, ctx):
-    #         yield msg
+        task = "Place order from user request"
+        async for msg in browse(task, ctx):
+            yield msg
 
 
     #     yield "place_order tool is not yet implemented."
@@ -350,6 +350,8 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
             yield completion.choices[0].message.content
 
         messages.append(await refine_assistant_message(completion.choices[0].message.model_dump()))
+
+        logger.info(f"Tool calls: {completion.choices[0].message.tool_calls!r}")
         
         while completion.choices[0].message.tool_calls is not None and len(completion.choices[0].message.tool_calls) > 0:
             calls += len(completion.choices[0].message.tool_calls)
