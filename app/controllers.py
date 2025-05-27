@@ -8,6 +8,7 @@ from .signals import (
 from typing import Literal
 from fnmatch import fnmatch
 import logging
+import json
 from playwright._impl._api_structures import (
     ClientCertificate,
     Cookie
@@ -85,12 +86,30 @@ _controller = Controller(
 )
 
 async def check_authorization(ctx: BrowserContext) -> bool:
-    # check local storage for key 'polymarket.auth.params'
-    local_storage = await ctx.session.context.local_storage('https://polymarket.com')
-    auth_params = local_storage.get('polymarket.auth.params', None)
-    # check if auth_params is not None and it object has value connectionState: 'ready'
+    # Get the current page
+    page = await ctx.get_current_page()
+    # Access local storage through page.evaluate
+    raw_storage = await page.evaluate("""
+        () => {
+            const params = localStorage.getItem('polymarket.auth.params');
+            console.log('Raw localStorage:', params);  // Browser console log
+            return params;
+        }
+    """)
+    logger.debug(f"Raw localStorage content: {raw_storage}")
+    
+    auth_params = None
+    if raw_storage:
+        try:
+            auth_params = json.loads(raw_storage)
+            logger.debug(f"Parsed auth params: {auth_params}")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse localStorage content: {e}")
+    
+    # check if auth_params is not None and it has value connectionState: 'ready'
     if auth_params is not None:
         connection_state = auth_params.get('connectionState', None)
+        logger.debug(f"Connection state: {connection_state}")
         if connection_state == 'ready':
             return True
     return False
@@ -100,7 +119,7 @@ async def ensure_url(ctx: BrowserContext, url: str) -> None:
     page = await ctx.get_current_page()
     current_url = page.url
 
-    if not fnmatch(current_url, url):
+    if not fnmatch(current_url, url + "*"):
         logger.info(f'Navigating to {url} from {current_url}')
         await page.goto(url, wait_until='networkidle')
 

@@ -11,7 +11,7 @@ import os
 from contextlib import asynccontextmanager
 import sys
 from typing import Union
-from patchright.async_api import async_playwright as async_patchright
+from patchright.async_api import async_playwright 
 
 from app.models.oai_compatible_models import (
     ChatCompletionStreamResponse, 
@@ -22,9 +22,12 @@ from typing import AsyncGenerator
 import time
 import uuid
 import openai
-from browser_use import Browser, BrowserConfig
+# from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
 
+from browser_use import BrowserSession, BrowserProfile, Agent
+
+BROWSER_PROFILE_DIR = "/browser-data/profiles/persistent"
 
 logger = logging.getLogger(__name__)
 
@@ -37,31 +40,34 @@ _GLOBALS = {}
 async def lifespan(app: fastapi.FastAPI):
     processes: list[asyncio.subprocess.Process] = []
 
-    BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1280)) 
-    BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 768)) 
+    BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1920)) 
+    BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 800)) 
     SCREEN_COLOR_DEPTH_BITS = int(os.getenv("SCREEN_COLOR_DEPTH_BITS", 24))
     DISPLAY = os.getenv("DISPLAY", ":99")
     NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
     CHROME_DEBUG_PORT = os.getenv("CHROME_DEBUG_PORT", 9222)
     os.environ['CDP_URL'] = f"http://localhost:{CHROME_DEBUG_PORT}"
 
+    process = await asyncio.create_subprocess_shell(
+        create_passwd_cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    await process.communicate()
+
+    os.makedirs('/tmp/.X11-unix', exist_ok=True)
+    os.makedirs('/tmp/.ICE-unix', exist_ok=True)
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+    logger.info(f"Created {BROWSER_PROFILE_DIR}: {os.path.exists(BROWSER_PROFILE_DIR)}")
+    os.makedirs('/browser-data/cookies', exist_ok=True)
+
     commands = [
-        'Xvfb {d} -screen 0 {w}x{h}x{b}'.format(
-            w=BROWSER_WINDOW_SIZE_WIDTH,
-            h=BROWSER_WINDOW_SIZE_HEIGHT,
-            b=SCREEN_COLOR_DEPTH_BITS,
-            d=DISPLAY
-        ),
+        f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac',
         'fluxbox',
-        'x11vnc -display {d} -nopw -forever -shared'.format(
-            d=DISPLAY
-        ),
-        '/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {no_vnc_port}'.format(
-            no_vnc_port=NO_VNC_PORT
-        )
+        f'x11vnc -display {DISPLAY} -nopw -forever -shared -reopen -bg -rfbport 5900',
+        f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}'
     ]
-    
-    
+
     try:
         for command in commands:
             logger.info(f"Executing {command}")
@@ -72,26 +78,72 @@ async def lifespan(app: fastapi.FastAPI):
                 shell=True,
                 executable="/bin/bash"
             )
-            
             processes.append(p)
 
-        browser = Browser(
+        logger.info("Browser data directory status:")
+        logger.info(f"Profile directory exists: {os.path.exists(BROWSER_PROFILE_DIR)}")
+        logger.info(f"Cookies directory exists: {os.path.exists('/browser-data/cookies')}")
+
+        # user_data_dir = "/browser-data/profiles/persistent"
+
+        # Clean up any existing Chrome processes
+        cleanup_cmd = "pkill -f chromium || true"
+        process = await asyncio.create_subprocess_shell(
+            cleanup_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+
+        playwright = await async_playwright().start()
+
+        # browser = await playwright.chromium.launch_persistent_context(
+        #     user_data_dir=user_data_dir,
+        #     headless=False,
+        #     args=[
+        #         f"--window-size={BROWSER_WINDOW_SIZE_WIDTH},{BROWSER_WINDOW_SIZE_HEIGHT}",
+        #         "--window-position=0,0",
+        #         "--homepage=https://www.amazon.com",
+        #         "--no-sandbox",
+        #         "--disable-dev-shm-usage",
+        #         "--disable-gpu",
+        #         "--disable-software-rasterizer",
+        #         "--disable-extensions",
+        #         "--disable-default-apps",
+        #         "--no-first-run",
+        #         "--no-default-browser-check",
+        #         "--password-store=basic",
+        #         "--use-mock-keychain",
+        #         "--disable-background-networking",
+        #         "--disable-background-timer-throttling",
+        #         "--disable-backgrounding-occluded-windows",
+        #         "--disable-breakpad",
+        #         "--disable-client-side-phishing-detection",
+        #         "--disable-component-extensions-with-background-pages",
+        #         "--disable-features=TranslateUI,BlinkGenPropertyTrees",
+        #         "--disable-ipc-flooding-protection",
+        #         "--disable-renderer-backgrounding",
+        #         "--enable-features=NetworkService,NetworkServiceInProcess",
+        #         "--force-color-profile=srgb",
+        #         "--metrics-recording-only",
+        #         "--mute-audio"
+        #     ],
+        #     viewport={"width": BROWSER_WINDOW_SIZE_WIDTH, "height": BROWSER_WINDOW_SIZE_HEIGHT}
+        # )
+
+        browser_profile = BrowserProfile(headless=False, user_data_dir=None, allowed_domains=['*'])
+
+
+        browser = BrowserSession(
+            browser_profile=browser_profile, user_data_dir=BROWSER_PROFILE_DIR,
             config=BrowserConfig(
-                # cdp_url='wss://browser.zenrows.com?apikey=972a1e7be909dfa64eeede10a97e958823fdfa6d',
-                # playwright=await async_patchright().start(),
-		        # user_data_dir='~/.config/browseruse/profiles/stealth',
-		        disable_security=False,
-		        deterministic_rendering=False,
                 headless=False,
-                extra_browser_args=[
-                    "--start-maximized",
-                    "--homepage=https://www.amazon.com",
-                ],
+                disable_security=False,
                 new_context_config=BrowserContextConfig(
-                    allowed_domains=["*"],
+                    allowed_domains=["*google.com*"],
                     cookies_file=None,
-                    maximum_wait_page_load_time=60,
-                    disable_security=True,
+                    maximum_wait_page_load_time=5,
+                    disable_security=False,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
                     viewport=dict(
                         width=BROWSER_WINDOW_SIZE_WIDTH,
@@ -101,16 +153,30 @@ async def lifespan(app: fastapi.FastAPI):
             )
         )
 
-        # await browser.start()
-        # await browser.create_new_tab('https://www.amazon.com')
-        # await asyncio.sleep(5)
         ctx = await browser.new_context() 
+
+        # Open amazon.com on start
+        # if browser.pages:
+        #     page = browser.pages[0]
+        #     await page.goto("https://www.amazon.com")
+        # else:
+        #     page = await browser.new_page()
+        #     await page.goto("https://www.amazon.com")
+
+        # logger.info("Browser context created successfully")
+
+        # try:
+        #     pages = await browser.pages()
+        #     logger.info(f"Active pages in context: {len(pages)}")
+        # except Exception as e:
+        #     logger.error(f"Error checking pages: {e}")
+
+        # ctx = await browser.new_context() 
 
         _GLOBALS['browser'] = browser
         _GLOBALS['browser_context'] = ctx
 
         await _GLOBALS['browser_context'].__aenter__()
-
         yield
 
     except Exception as err:
@@ -121,13 +187,27 @@ async def lifespan(app: fastapi.FastAPI):
             try:
                 process.kill()
             except: pass
-        
+
         if _GLOBALS.get('browser_context'):
             try:
                 await _GLOBALS['browser_context'].__aexit__(None, None, None)
             except Exception as err:
                 logger.error(f"Exception raised while closing browser context: {err}", stack_info=True)
 
+        if _GLOBALS.get('playwright'):
+            try:
+                await _GLOBALS['playwright'].stop()
+            except Exception as err:
+                logger.error(f"Exception raised while stopping playwright: {err}", stack_info=True)
+
+        # Final cleanup of Chrome processes
+        cleanup_cmd = "pkill -f chromium || true"
+        process = await asyncio.create_subprocess_shell(
+            cleanup_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
 
 async def stream_reader(s: AsyncGenerator[Union[str, bytes], None]):
     error_message = None
@@ -170,7 +250,6 @@ async def stream_reader(s: AsyncGenerator[Union[str, bytes], None]):
 
     except Exception as err:
         error_message = "Unhandled error: " + str(err)
-
         import traceback
         logger.error(traceback.format_exc())
 
@@ -184,7 +263,7 @@ def main():
     api_app = fastapi.FastAPI(
         lifespan=lifespan
     )
-    
+
     @api_app.get("/processing-url")
     async def get_processing_url():
         http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?host=localhost&port=6080")
@@ -204,7 +283,7 @@ def main():
             },
             status_code=404
         )
-        
+
     @api_app.post("/prompt", response_model=None)
     async def post_prompt(body: dict) -> Union[StreamingResponse, PlainTextResponse, JSONResponse]:
         if body.get('ping'):
@@ -241,7 +320,6 @@ def main():
             )
         except Exception as err:
             error_message = "Unexpected Error: " + str(err)
-
             import traceback
             logger.error(traceback.format_exc())
 
@@ -260,7 +338,6 @@ def main():
         allow_headers=["*"],
     )
 
-    # pre-setup
     event_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(event_loop)
 

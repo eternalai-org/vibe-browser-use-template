@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  browser-app:
+    build: .
+    ports:
+      - "80:80"
+      - "6080:6080" # noVNC
+      - "9222:9222" # Chrome debug port
+    volumes:
+      - ./browser-data:/browser-data
+      - ./data/profiles/persistent:/browser-data/profiles/persistent
+      - ./data/cookies:/browser-data/cookies
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    environment:
+      - DISPLAY=:99
+      - NO_VNC_PORT=6080
+      - CHROME_DEBUG_PORT=9222
+      - BROWSER_WINDOW_SIZE_WIDTH=1280
+      - BROWSER_WINDOW_SIZE_HEIGHT=768
+      - SCREEN_COLOR_DEPTH_BITS=24
+      - XDG_SESSION_TYPE=x11
+      - DBUS_SESSION_BUS_ADDRESS=/dev/null
+    privileged: true

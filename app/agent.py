@@ -17,6 +17,9 @@ import logging
 import openai
 import json
 
+from .signals import UnauthorizedAccess
+from .controllers import check_authorization, ensure_url
+
 logger = logging.getLogger()
 
 async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[str, None]:
@@ -125,70 +128,20 @@ async def execute_openai_compatible_toolcall(
 ) -> AsyncGenerator[str, None]:
     logger.info(f"Executing tool call: {name} with args: {args}")
 
+    if not name or not args:
+        # allow LLM to answer without tool calls
+        yield "No tool call name or arguments provided."
+
+
     if name == "get_markets":
     #     # Implement get_markets tool call here
 
         # check if the user is on the right page
         # if not, then go to the right page
-        await ensure_url(ctx, 'https://amazon.com')
 
         task = f"Find the market from user request: {args}"
         async for msg in browse(task, ctx):
             yield msg
-
-
-    #     # keyword = args.get("keywords", None)
-
-    #     # sorting = args.get("sorting", None)
-    #     # category = args.get("category", None)
-    #     # frequency = args.get("frequency", None)
-
-    #     # logger.info(f"Keyword: {keyword}")
-    #     # logger.info(f"category: {category}")
-    #     # logger.info(f"frequency: {frequency}")
-
-    #     # #if exist sorting or frequency, then then click button with aria-label="Toggle filters"
-    #     # if sorting or frequency:
-    #     #     page = await ctx.get_current_page()
-    #     #     await page.click('button[aria-label="Toggle filters"]')
-    #     #     await page.wait_for_timeout(1000)
-    #     #     if sorting:
-    #     #         # find span with text "Sort by:"
-    #     #         sortElement = await page.query_selector('span:has-text("Sort by:")')
-
-    #     #         if sortElement:
-    #     #             # click on it button parent element
-    #     #             parentElement = await sortElement.query_selector('..')
-    #     #             if parentElement:
-    #     #                 await parentElement.click()
-    #     #                 await page.wait_for_timeout(1000)
-    #     #                 # click on the sorting option
-    #     #                 if sorting:
-    #     #                     # Click on the sorting option in the dropdown
-    #     #                     # Find the div with text matching the sorting value, for example 
-    #     #                     # "24hr_volume" is "24hr Volume"
-    #     #                     logger.info(f"sorting: {sorting}")
-
-    #     #                     match_title = sorting.replace("_", " ").title()
-    #     #                     logger.info(f"match_title: {match_title}")
-                            
-    #     #                     sorting_option = await page.query_selector(f'div:has-text("{match_title}")')
-
-    #     #                     logger.info(f"sorting_option: {sorting_option}")
-                            
-    #     #                     if sorting_option:
-    #     #                         await sorting_option.click()
-    #     #                         await page.wait_for_timeout(1000)
-                           
-
-
-    #     #                 # await page.click(f'button[aria-label="{sorting}"]')
-    #     #                 # await page.wait_for_timeout(1000)
-
-
-    #     # page = await ctx.get_current_page()
-
-
 
     #     # yield "get_markets tool is not yet implemented."
     #     return
@@ -198,7 +151,6 @@ async def execute_openai_compatible_toolcall(
 
         # check if the user is on the right page
         # if not, then go to the right page
-        await ensure_url(ctx, 'https://amazon.com')
 
         task = "Place order from user request"
         async for msg in browse(task, ctx):
@@ -208,18 +160,6 @@ async def execute_openai_compatible_toolcall(
     #     yield "place_order tool is not yet implemented."
     #     return
 
-    yield f"Unknown tool call: {name}; Available tools are: get_markets, place_order"
-
-    yield f"task {task_query!r} completed"
-    
-
-async def execute_openai_compatible_toolcall(
-    ctx: BrowserContext,
-    name: str,
-    args: dict[str, str]
-) -> AsyncGenerator[str, None]:
-    logger.info(f"Executing tool call: {name} with args: {args}")
-    
     if name == "xbrowse":
         task = args.get("task", "")
 
@@ -230,9 +170,9 @@ async def execute_openai_compatible_toolcall(
         async for msg in browse(task, ctx):
             yield msg
             
-        return
+        return 
 
-    yield f"Unknown tool call: {name}; only xbrowse is available."
+    yield f"Unknown tool call: {name}; Available tools are: get_markets, place_order"
 
 
 async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext, **_) -> AsyncGenerator[str, None]:
@@ -331,6 +271,8 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
     )
 
     messages = await refine_chat_history(messages, get_system_prompt())
+
+    logger.info(f"Messages: {messages!r}")
     
     response_uuid = random_uuid()
     error_details = ''
