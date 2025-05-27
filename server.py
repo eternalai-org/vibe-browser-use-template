@@ -22,12 +22,10 @@ from typing import AsyncGenerator
 import time
 import uuid
 import openai
-# from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
+from browser_use import BrowserSession, BrowserProfile, Agent, BrowserConfig
 
-from browser_use import BrowserSession, BrowserProfile, Agent
-
-BROWSER_PROFILE_DIR = "/browser-data/profiles/persistent"
+BROWSER_PROFILE_DIR = "/storage/browser-profiles"
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +48,10 @@ async def lifespan(app: fastapi.FastAPI):
     os.environ['CDP_URL'] = f"http://localhost:{CHROME_DEBUG_PORT}"
     os.makedirs('/tmp/.X11-unix', exist_ok=True)
     os.makedirs('/tmp/.ICE-unix', exist_ok=True)
-    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
 
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     logger.info(f"Created {BROWSER_PROFILE_DIR}: {os.path.exists(BROWSER_PROFILE_DIR)}")
+
     os.makedirs(f'{BROWSER_PROFILE_DIR}/cookies', exist_ok=True)
 
     commands = [
@@ -194,7 +193,7 @@ def main():
 
     @api_app.get("/processing-url")
     async def get_processing_url():
-        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true")
+        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true&?resize=remote")
 
         if http_display_url:
             return JSONResponse(
