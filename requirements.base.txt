@@ -1,0 +1,6 @@
+browser-use
+fastapi[standard]
+pydantic
+python-dotenv
+json-repair
+patchright==1.52.0

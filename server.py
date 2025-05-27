@@ -11,6 +11,8 @@ import os
 from contextlib import asynccontextmanager
 import sys
 from typing import Union
+from patchright.async_api import async_playwright 
+
 from app.models.oai_compatible_models import (
     ChatCompletionStreamResponse, 
     PromptErrorResponse
@@ -20,8 +22,12 @@ from typing import AsyncGenerator
 import time
 import uuid
 import openai
-from browser_use import Browser, BrowserConfig
+# from browser_use import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
+
+from browser_use import BrowserSession, BrowserProfile, Agent
+
+BROWSER_PROFILE_DIR = "/browser-data/profiles/persistent"
 
 logger = logging.getLogger(__name__)
 
@@ -40,25 +46,22 @@ async def lifespan(app: fastapi.FastAPI):
     DISPLAY = os.getenv("DISPLAY", ":99")
     NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
     CHROME_DEBUG_PORT = os.getenv("CHROME_DEBUG_PORT", 9222)
+
     os.environ['CDP_URL'] = f"http://localhost:{CHROME_DEBUG_PORT}"
+    os.makedirs('/tmp/.X11-unix', exist_ok=True)
+    os.makedirs('/tmp/.ICE-unix', exist_ok=True)
+    os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+
+    logger.info(f"Created {BROWSER_PROFILE_DIR}: {os.path.exists(BROWSER_PROFILE_DIR)}")
+    os.makedirs(f'{BROWSER_PROFILE_DIR}/cookies', exist_ok=True)
 
     commands = [
-        'Xvfb {d} -screen 0 {w}x{h}x{b}'.format(
-            w=BROWSER_WINDOW_SIZE_WIDTH,
-            h=BROWSER_WINDOW_SIZE_HEIGHT,
-            b=SCREEN_COLOR_DEPTH_BITS,
-            d=DISPLAY
-        ),
+        f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac',
         'fluxbox',
-        'x11vnc -display {d} -nopw -forever -shared'.format(
-            d=DISPLAY
-        ),
-        '/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {no_vnc_port}'.format(
-            no_vnc_port=NO_VNC_PORT
-        )
+        f'x11vnc -display {DISPLAY} -nopw -forever -shared -reopen -bg -rfbport 5900',
+        f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}'
     ]
-    
-    
+
     try:
         for command in commands:
             logger.info(f"Executing {command}")
@@ -69,22 +72,30 @@ async def lifespan(app: fastapi.FastAPI):
                 shell=True,
                 executable="/bin/bash"
             )
-            
             processes.append(p)
 
-        browser = Browser(
+        logger.info("Browser data directory status:")
+        logger.info(f"Profile directory exists: {os.path.exists(BROWSER_PROFILE_DIR)}")
+        logger.info(f"Cookies directory exists: {os.path.exists('/browser-data/cookies')}")
+
+        # user_data_dir = "/browser-data/profiles/persistent"
+
+
+        playwright = await async_playwright().start()
+
+        browser_profile = BrowserProfile(headless=False, user_data_dir=None, allowed_domains=['*'])
+
+        browser = BrowserSession(
+            browser_profile=browser_profile, 
+			user_data_dir=BROWSER_PROFILE_DIR,
             config=BrowserConfig(
                 headless=False,
-                disable_security=True,
-                extra_browser_args=[
-                    "--start-maximized",
-                    "--homepage=https://www.google.com",
-                ],
+                disable_security=False,
                 new_context_config=BrowserContextConfig(
                     allowed_domains=["*"],
                     cookies_file=None,
-                    maximum_wait_page_load_time=60,
-                    disable_security=True,
+                    maximum_wait_page_load_time=5,
+                    disable_security=False,
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3",
                     viewport=dict(
                         width=BROWSER_WINDOW_SIZE_WIDTH,
@@ -100,7 +111,6 @@ async def lifespan(app: fastapi.FastAPI):
         _GLOBALS['browser_context'] = ctx
 
         await _GLOBALS['browser_context'].__aenter__()
-
         yield
 
     except Exception as err:
@@ -111,13 +121,21 @@ async def lifespan(app: fastapi.FastAPI):
             try:
                 process.kill()
             except: pass
-        
+
         if _GLOBALS.get('browser_context'):
             try:
                 await _GLOBALS['browser_context'].__aexit__(None, None, None)
             except Exception as err:
                 logger.error(f"Exception raised while closing browser context: {err}", stack_info=True)
 
+        # Final cleanup of Chrome processes
+        cleanup_cmd = "pkill -f chromium || true"
+        process = await asyncio.create_subprocess_shell(
+            cleanup_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
 
 async def stream_reader(s: AsyncGenerator[Union[str, bytes], None]):
     error_message = None
@@ -160,7 +178,6 @@ async def stream_reader(s: AsyncGenerator[Union[str, bytes], None]):
 
     except Exception as err:
         error_message = "Unhandled error: " + str(err)
-
         import traceback
         logger.error(traceback.format_exc())
 
@@ -174,10 +191,10 @@ def main():
     api_app = fastapi.FastAPI(
         lifespan=lifespan
     )
-    
+
     @api_app.get("/processing-url")
     async def get_processing_url():
-        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?host=localhost&port=6080")
+        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true")
 
         if http_display_url:
             return JSONResponse(
@@ -194,7 +211,7 @@ def main():
             },
             status_code=404
         )
-        
+
     @api_app.post("/prompt", response_model=None)
     async def post_prompt(body: dict) -> Union[StreamingResponse, PlainTextResponse, JSONResponse]:
         if body.get('ping'):
@@ -231,7 +248,6 @@ def main():
             )
         except Exception as err:
             error_message = "Unexpected Error: " + str(err)
-
             import traceback
             logger.error(traceback.format_exc())
 
@@ -250,7 +266,6 @@ def main():
         allow_headers=["*"],
     )
 
-    # pre-setup
     event_loop = asyncio.new_event_loop()
     asyncio.set_event_loop(event_loop)
 
