@@ -4,6 +4,7 @@ app/models/__pycache__/
 app/.DS_Store
 __pycache__/
 data
+browser-data
 Archive.zip
 
 # ignore Python bytecode files
