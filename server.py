@@ -70,7 +70,6 @@ async def lifespan(app: fastapi.FastAPI):
                 executable="/bin/bash"
             )
             processes.append(p)
-            await asyncio.sleep(1)  # Give some time for the process to start 
 
         browser_profile = BrowserProfile(user_data_dir=BROWSER_PROFILE_DIR)
 
@@ -98,6 +97,10 @@ async def lifespan(app: fastapi.FastAPI):
         _GLOBALS['browser_context'] = ctx
 
         await _GLOBALS['browser_context'].__aenter__()
+        
+        current_page = await ctx.get_current_page()
+        await current_page.goto("https://google.com")
+        
         yield
 
     except Exception as err:
