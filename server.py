@@ -11,8 +11,6 @@ import os
 from contextlib import asynccontextmanager
 import sys
 from typing import Union
-from patchright.async_api import async_playwright 
-
 from app.models.oai_compatible_models import (
     ChatCompletionStreamResponse, 
     PromptErrorResponse
@@ -23,7 +21,8 @@ import time
 import uuid
 import openai
 from browser_use.browser.context import BrowserContextConfig
-from browser_use import BrowserSession, BrowserProfile, Agent, BrowserConfig
+from browser_use import BrowserSession, BrowserProfile, BrowserConfig
+
 
 BROWSER_PROFILE_DIR = "/storage/browser-profiles"
 
@@ -38,8 +37,8 @@ _GLOBALS = {}
 async def lifespan(app: fastapi.FastAPI):
     processes: list[asyncio.subprocess.Process] = []
 
-    BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1280)) 
-    BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 768)) 
+    BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1440)) 
+    BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 1440)) 
     SCREEN_COLOR_DEPTH_BITS = int(os.getenv("SCREEN_COLOR_DEPTH_BITS", 24))
     DISPLAY = os.getenv("DISPLAY", ":99")
     NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
@@ -47,17 +46,16 @@ async def lifespan(app: fastapi.FastAPI):
 
     os.environ['CDP_URL'] = f"http://localhost:{CHROME_DEBUG_PORT}"
     os.makedirs('/tmp/.X11-unix', exist_ok=True)
-    os.makedirs('/tmp/.ICE-unix', exist_ok=True)
+    os.makedirs('/tmp/.ICE-unix', exist_ok=True)    
 
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     logger.info(f"Created {BROWSER_PROFILE_DIR}: {os.path.exists(BROWSER_PROFILE_DIR)}")
 
-    os.makedirs(f'{BROWSER_PROFILE_DIR}/cookies', exist_ok=True)
-
     commands = [
-        f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac',
-        'fluxbox',
-        f'x11vnc -display {DISPLAY} -nopw -forever -shared -reopen -bg -rfbport 5900',
+        f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac -nolisten tcp',
+        'openbox-session',
+        f"bash scripts/x11-setup.sh",
+        f'x11vnc -display {DISPLAY} -forever -shared -nopw -geometry {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT} -scale 1:1 -nomodtweak',
         f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}'
     ]
 
@@ -72,24 +70,14 @@ async def lifespan(app: fastapi.FastAPI):
                 executable="/bin/bash"
             )
             processes.append(p)
+            await asyncio.sleep(1)  # Give some time for the process to start 
 
-        logger.info("Browser data directory status:")
-        logger.info(f"Profile directory exists: {os.path.exists(BROWSER_PROFILE_DIR)}")
-        logger.info(f"Cookies directory exists: {os.path.exists('/browser-data/cookies')}")
-
-        # user_data_dir = "/browser-data/profiles/persistent"
-
-
-        playwright = await async_playwright().start()
-
-        browser_profile = BrowserProfile(headless=False, user_data_dir=None, allowed_domains=['*'])
+        browser_profile = BrowserProfile(user_data_dir=BROWSER_PROFILE_DIR)
 
         browser = BrowserSession(
             browser_profile=browser_profile, 
-			user_data_dir=BROWSER_PROFILE_DIR,
             config=BrowserConfig(
                 headless=False,
-                disable_security=False,
                 new_context_config=BrowserContextConfig(
                     allowed_domains=["*"],
                     cookies_file=None,
@@ -99,7 +87,7 @@ async def lifespan(app: fastapi.FastAPI):
                     viewport=dict(
                         width=BROWSER_WINDOW_SIZE_WIDTH,
                         height=BROWSER_WINDOW_SIZE_HEIGHT
-                    )
+                    ),
                 )
             )
         )
@@ -193,7 +181,7 @@ def main():
 
     @api_app.get("/processing-url")
     async def get_processing_url():
-        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true&?resize=remote")
+        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true&resize=scale")
 
         if http_display_url:
             return JSONResponse(
