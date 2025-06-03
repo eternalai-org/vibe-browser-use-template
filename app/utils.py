@@ -9,7 +9,8 @@ import uuid
 from .models.oai_compatible_models import ChatCompletionStreamResponse
 import time
 import json
-
+from typing import Any
+from pydantic import BaseModel
 
 logger = logging.getLogger()
 
@@ -163,3 +164,105 @@ async def wrap_chunk(uuid: str, raw: str, role="assistant") -> ChatCompletionStr
 
 async def to_chunk_data(chunk: ChatCompletionStreamResponse) -> bytes:
     return ("data: " + json.dumps(chunk.model_dump()) + "\n\n").encode()
+
+
+
+def wrap_toolcall_request(uuid: str, fn_name: str, args: dict[str, Any]) -> ChatCompletionStreamResponse:
+    args_str = json.dumps(args, indent=2)
+
+    template = f'''
+Executing <b>{fn_name}</b>
+
+<details>
+<summary>
+Arguments:
+</summary>
+
+```json
+{args_str}
+```
+
+</details>
+'''
+
+    return ChatCompletionStreamResponse(
+        id=uuid,
+        object='chat.completion.chunk',
+        created=int(time.time()),
+        model='unspecified',
+        choices=[
+            dict(
+                index=0,
+                delta=dict(
+                    content=template,
+                    role='tool'
+                ),
+            )
+        ]
+    )
+    
+
+def refine_mcp_response(something: Any) -> str:
+    if isinstance(something, dict):
+        return {
+            k: refine_mcp_response(v)
+            for k, v in something.items()
+        }
+
+    elif isinstance(something, (list, tuple)):
+        return [
+            refine_mcp_response(v)
+            for v in something
+        ]
+
+    elif isinstance(something, BaseModel):
+        return something.model_dump()
+
+    return something
+    
+
+def wrap_toolcall_response(
+    uuid: str,
+    fn_name: str,
+    args: dict[str, Any],
+    result: dict[str, Any]
+) -> ChatCompletionStreamResponse:
+
+    data = refine_mcp_response(result)
+
+    try:
+        data = json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"Failed to JOSN serialize tool call response: {e}")
+        data = str(data)
+
+
+    result = f'''
+<details>
+<summary>
+Response:
+</summary>
+
+{data}
+
+</details>
+<br>
+
+'''
+
+    return ChatCompletionStreamResponse(
+        id=uuid,
+        object='chat.completion.chunk',
+        created=int(time.time()),
+        model='unspecified',
+        choices=[
+            dict(
+                index=0,
+                delta=dict(
+                    content=result,
+                    role='tool'
+                ),
+            )
+        ]
+    )
+    

@@ -1,121 +1,28 @@
 from typing import AsyncGenerator
-from langchain_openai import ChatOpenAI
 import os
-from .callbacks import (
-    on_task_completed, 
-    on_task_start
-)
 import traceback
 import httpx
-
-from browser_use import Agent
 from browser_use.browser.context import BrowserContext
-from .controllers import get_controler
-from .models import browser_use_custom_models, oai_compatible_models
-from .utils import get_system_prompt, repair_json_no_except, refine_chat_history, to_chunk_data, refine_assistant_message, wrap_chunk, random_uuid
+from .models import oai_compatible_models
+from .utils import (
+    get_system_prompt, 
+    refine_chat_history, 
+    to_chunk_data, 
+    refine_assistant_message,
+    wrap_chunk,
+    random_uuid,
+    wrap_toolcall_response,
+    refine_mcp_response
+)
 import logging
 import openai
 import json
+from .toolcalls import execute_toolcall, get_context_aware_available_toolcalls
 
 logger = logging.getLogger()
 
-async def browse(task_query: str, ctx: BrowserContext, **_) -> AsyncGenerator[str, None]:
-
-    controller = get_controler()
-    system_prompt = get_system_prompt()
-
-    model = ChatOpenAI(
-        model=os.getenv("LLM_MODEL_ID", 'local-llm'),
-        openai_api_base=os.getenv("LLM_BASE_URL", 'http://localhost:65534/v1'),
-        openai_api_key=os.getenv("LLM_API_KEY", 'no-need'),
-    )
-
-    current_agent = Agent(
-        task=task_query,
-        llm=model,
-        page_extraction_llm=model,
-        planner_llm=model,
-        browser_context=ctx,
-        controller=controller,
-        extend_system_message=system_prompt,
-
-        is_planner_reasoning=False,
-        use_vision=True,
-        use_vision_for_planner=True,
-        enable_memory=False
-    )
-
-    res = await current_agent.run(
-        max_steps=40,
-        on_step_start=on_task_start, 
-        on_step_end=on_task_completed
-    )
-
-    final_result = res.final_result()
-
-    if final_result is not None:
-        try:
-            parsed: browser_use_custom_models.FinalAgentResult \
-                = browser_use_custom_models.FinalAgentResult.model_validate_json(
-                    repair_json_no_except(final_result)
-                )
-
-            if parsed.status == "pending":
-                logger.info(f"Completed task in status {parsed.status}")
-
-            yield parsed.message
-        except Exception as err:
-            logger.info(f"Exception raised while parsing final answer: {err}")
-            yield f"task {task_query!r} completed!"
-
-    yield f"task {task_query!r} completed"
-    
-
-async def execute_openai_compatible_toolcall(
-    ctx: BrowserContext,
-    name: str,
-    args: dict[str, str]
-) -> AsyncGenerator[str, None]:
-    logger.info(f"Executing tool call: {name} with args: {args}")
-    
-    if name == "xbrowse":
-        task = args.get("task", "")
-
-        if not task:
-            yield "No task provided for xbrowse tool call."
-            return
-
-        async for msg in browse(task, ctx):
-            yield msg
-            
-        return
-
-    yield f"Unknown tool call: {name}; only xbrowse is available."
-
 
 async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext, **_) -> AsyncGenerator[str, None]:
-    functions = [
-        {
-            "type": "function",
-            "function": {
-                "name": "xbrowse",
-                "description": "Ask the XBrowser to complete the browsing task, as you can not!",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "Task description to do in browser. It should be rich information. For instance, the user want to go shopping online, the task definition should be: what to buy, where and, or how to retrieve the needed information, etc."
-                        }    
-                    },
-                    "required": ["task"],
-                    "additionalProperties": False
-                },
-                "strict": True
-            }
-        }
-    ]
-
     llm = openai.AsyncClient(
         base_url=os.getenv("LLM_BASE_URL", "http://localmodel:65534/v1"),
         api_key=os.getenv("LLM_API_KEY", "no-need")
@@ -127,6 +34,8 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
     error_details = ''
     error_message = ''
     calls = 0
+    
+    functions = await get_context_aware_available_toolcalls(browser_context)
 
     try:
         completion = await llm.chat.completions.create(
@@ -170,28 +79,30 @@ async def prompt(messages: list[dict[str, str]], browser_context: BrowserContext
                     )
 
                     try:
-                        async for msg in execute_openai_compatible_toolcall(
+                        response = await execute_toolcall(
                             ctx=browser_context, 
-                            name=_name,
+                            tool_name=_name,
                             args=_args
-                        ):
-                            yield msg
+                        )
 
-                            if isinstance(msg, str):
-                                result += msg + '\n'
+                        if response.success:
+                            yield to_chunk_data(
+                                wrap_toolcall_response(
+                                    uuid=response_uuid,
+                                    fn_name=_name,
+                                    args=_args,
+                                    result=response.result
+                                )
+                            )
+
+                            result = json.dumps(refine_mcp_response(response.result))
+
+                        else:
+                            result = f"Tool call failed: {response.error}"
 
                     except Exception as e:
                         logger.error(f"{e}", exc_info=True)
-
-                        yield await to_chunk_data(
-                            await wrap_chunk(
-                                response_uuid,
-                                f"Exception raised. Pausing...\n",
-                                role="tool"
-                            )
-                        )
-
-                        result = f"Something went wrong, ask the user to solve it manually and notify you again once when it is resolved. After then, Re-execute {_name} with these arguments: {_args}" 
+                        result = f"Something went wrong: {str(e)}" 
                         has_exception = True
 
                 messages.append(

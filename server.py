@@ -23,7 +23,6 @@ import openai
 from browser_use.browser.context import BrowserContextConfig
 from browser_use import BrowserSession, BrowserProfile, BrowserConfig
 
-
 BROWSER_PROFILE_DIR = "/storage/browser-profiles"
 
 logger = logging.getLogger(__name__)
@@ -58,6 +57,24 @@ async def lifespan(app: fastapi.FastAPI):
         f'x11vnc -display {DISPLAY} -forever -shared -nopw -geometry {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT} -scale 1:1 -nomodtweak',
         f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}'
     ]
+    
+    for file in ["SingletonLock", "SingletonCookie", "SingletonSocket", "Local State", "Last Version"]:
+        path = os.path.join(BROWSER_PROFILE_DIR, file)
+
+        # check if the path is symlink
+        if os.path.islink(path):
+            # remove the original file
+            reference_path = os.readlink(path)
+            os.unlink(path)
+            
+            try:
+                os.remove(reference_path)
+            except FileNotFoundError:
+                logger.warning(f"Reference file {reference_path} not found, skipping removal.")
+
+        elif os.path.exists(path):
+            logger.info(f"Removing {path}")
+            os.remove(path)
 
     try:
         for command in commands:
@@ -70,13 +87,12 @@ async def lifespan(app: fastapi.FastAPI):
                 executable="/bin/bash"
             )
             processes.append(p)
-
-        browser_profile = BrowserProfile(user_data_dir=BROWSER_PROFILE_DIR)
+            
 
         browser = BrowserSession(
-            browser_profile=browser_profile, 
             config=BrowserConfig(
                 headless=False,
+                user_data_dir=BROWSER_PROFILE_DIR,
                 new_context_config=BrowserContextConfig(
                     allowed_domains=["*"],
                     cookies_file=None,
@@ -86,7 +102,7 @@ async def lifespan(app: fastapi.FastAPI):
                     viewport=dict(
                         width=BROWSER_WINDOW_SIZE_WIDTH,
                         height=BROWSER_WINDOW_SIZE_HEIGHT
-                    ),
+                    )
                 )
             )
         )
@@ -105,12 +121,10 @@ async def lifespan(app: fastapi.FastAPI):
 
     except Exception as err:
         logger.error(f"Exception raised {err}", stack_info=True)
+        import traceback
+        logger.error(traceback.format_exc())
 
     finally:
-        for process in processes:
-            try:
-                process.kill()
-            except: pass
 
         if _GLOBALS.get('browser_context'):
             try:
@@ -118,7 +132,12 @@ async def lifespan(app: fastapi.FastAPI):
             except Exception as err:
                 logger.error(f"Exception raised while closing browser context: {err}", stack_info=True)
 
-        # Final cleanup of Chrome processes
+        for process in processes:
+            try:
+                process.kill()
+            except Exception as err: 
+                logger.error(f"Failed to kill process {process}: {err}", stack_info=True)
+
         cleanup_cmd = "pkill -f chromium || true"
         process = await asyncio.create_subprocess_shell(
             cleanup_cmd,
