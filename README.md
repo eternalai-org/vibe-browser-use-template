@@ -2,28 +2,9 @@
 
 ## What can be customized?
 
-### 1. Callbacks 
+### Toolcalls 
 
-In the file `app/callbacks.py` there are two callback functions that can be customized:
-- on_task_start: trigger once when the agent start running the task (agent loop). 
-- on_task_completed: trigger once when the agent completed the task, before exiting.
-
-See [customize/hooks](https://docs.browser-use.com/customize/hooks) for more.
-
-### 2. Controllers
-
-Write and register your custom controllers in `app/controllers.py`. See [customize/custom-functions](https://docs.browser-use.com/customize/custom-functions) for:
-- What are controllers 
-- How to define a custom controller
-
-### 3. Prompting
-
-Define your custom system message in `system_prompt.txt`. See [customize/system-prompt](https://docs.browser-use.com/customize/system-prompt).
-
-### 4. Response model
-
-Define the output structure to the agent in [browser_use_custom_models.py](app/models/browser_use_custom_models.py). See [customize/output-format](https://docs.browser-use.com/customize/output-format).
-
+See: `app/toolcalls.py`
 
 ## Debugging
 
