@@ -10,7 +10,9 @@ from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 import os
 from contextlib import asynccontextmanager
 import sys
-from typing import Union
+from typing import Union, Dict, List, Tuple
+import signal
+import psutil
 from app.models.oai_compatible_models import (
     ChatCompletionStreamResponse, 
     PromptErrorResponse
@@ -32,31 +34,104 @@ if not load_dotenv():
 
 _GLOBALS = {}
 
+BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1440)) 
+BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 1440)) 
+SCREEN_COLOR_DEPTH_BITS = int(os.getenv("SCREEN_COLOR_DEPTH_BITS", 24))
+DISPLAY = os.getenv("DISPLAY", ":99")
+NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
+CHROME_DEBUG_PORT = os.getenv("CHROME_DEBUG_PORT", 9222)
+
+# retry a process until it done with exit code = 0 or forever auto restart it
+async def observe_process(command: str, app_signal: asyncio.Event, auto_restart: bool = True, pending_restart: float = 1):
+    while not app_signal.is_set():
+        logger.info(f"Executing {command!r}")
+
+        process = await asyncio.create_subprocess_shell(
+            command,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+            shell=True,
+            executable="/bin/bash"
+        )
+
+        task = asyncio.create_task(process.wait())
+
+        while not app_signal.is_set():
+            done_process, pending_process = await asyncio.wait(
+                [task], 
+                timeout=1
+            )
+
+            if len(done_process) > 0:
+                process: asyncio.subprocess.Process = done_process[0]
+    
+                if process.returncode == 0:
+                    if not auto_restart:
+                        return
+
+        logger.info(f"App signal is set, killing process {process.pid} (running: {command!r})")
+
+        try:
+            process.kill()
+
+            if returncode := await task:
+                logger.info(f"Process {process.pid} exited with code {returncode}")
+
+        except Exception as err:
+            logger.error(f"Exception raised while killing process: {err}", stack_info=True)
+
+        await asyncio.sleep(pending_restart)
+
+
 @asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
-    processes: list[asyncio.subprocess.Process] = []
+    app_signal = asyncio.Event()
 
-    BROWSER_WINDOW_SIZE_WIDTH = int(os.getenv("BROWSER_WINDOW_SIZE_WIDTH", 1440)) 
-    BROWSER_WINDOW_SIZE_HEIGHT = int(os.getenv("BROWSER_WINDOW_SIZE_HEIGHT", 1440)) 
-    SCREEN_COLOR_DEPTH_BITS = int(os.getenv("SCREEN_COLOR_DEPTH_BITS", 24))
-    DISPLAY = os.getenv("DISPLAY", ":99")
-    NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
-    CHROME_DEBUG_PORT = os.getenv("CHROME_DEBUG_PORT", 9222)
-
-    os.environ['CDP_URL'] = f"http://localhost:{CHROME_DEBUG_PORT}"
     os.makedirs('/tmp/.X11-unix', exist_ok=True)
     os.makedirs('/tmp/.ICE-unix', exist_ok=True)    
 
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     logger.info(f"Created {BROWSER_PROFILE_DIR}: {os.path.exists(BROWSER_PROFILE_DIR)}")
+    
+    tasks = []
+    
 
-    commands = [
-        f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac -nolisten tcp',
-        'openbox-session',
-        f"bash scripts/x11-setup.sh",
-        f'x11vnc -display {DISPLAY} -forever -shared -nopw -geometry {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT} -scale 1:1 -nomodtweak',
-        f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}'
-    ]
+    # Start initial processes
+    tasks.append(asyncio.create_task(
+        observe_process(
+            f'Xvfb {DISPLAY} -screen 0 {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT}x{SCREEN_COLOR_DEPTH_BITS} -ac -nolisten tcp',
+            app_signal
+        )
+    ))
+
+    tasks.append(asyncio.create_task(
+        observe_process(
+            'openbox-session',
+            app_signal
+        )
+    ))
+
+    tasks.append(asyncio.create_task(
+        observe_process(
+            'bash /scripts/x11-setup.sh',
+            app_signal,
+            auto_restart=False
+        )
+    ))
+
+    tasks.append(asyncio.create_task(
+        observe_process(
+            f'x11vnc -display {DISPLAY} -forever -shared -nopw -geometry {BROWSER_WINDOW_SIZE_WIDTH}x{BROWSER_WINDOW_SIZE_HEIGHT} -scale 1:1 -nomodtweak',
+            app_signal
+        )
+    ))
+
+    tasks.append(asyncio.create_task(
+        observe_process(
+            f'/opt/novnc/utils/novnc_proxy --vnc localhost:5900 --listen {NO_VNC_PORT}',
+            app_signal
+        )
+    ))
     
     for file in ["SingletonLock", "SingletonCookie", "SingletonSocket", "Local State", "Last Version"]:
         path = os.path.join(BROWSER_PROFILE_DIR, file)
@@ -77,18 +152,6 @@ async def lifespan(app: fastapi.FastAPI):
             os.remove(path)
 
     try:
-        for command in commands:
-            logger.info(f"Executing {command}")
-            p = await asyncio.create_subprocess_shell(
-                command,
-                stdout=sys.stdout,
-                stderr=sys.stderr,
-                shell=True,
-                executable="/bin/bash"
-            )
-            processes.append(p)
-            
-
         browser = BrowserSession(
             config=BrowserConfig(
                 headless=False,
@@ -132,12 +195,9 @@ async def lifespan(app: fastapi.FastAPI):
             except Exception as err:
                 logger.error(f"Exception raised while closing browser context: {err}", stack_info=True)
 
-        for process in processes:
-            try:
-                process.kill()
-            except Exception as err: 
-                logger.error(f"Failed to kill process {process}: {err}", stack_info=True)
+        app_signal.set()
 
+        # Cleanup any remaining Chromium processes
         cleanup_cmd = "pkill -f chromium || true"
         process = await asyncio.create_subprocess_shell(
             cleanup_cmd,
@@ -145,6 +205,7 @@ async def lifespan(app: fastapi.FastAPI):
             stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 async def stream_reader(s: AsyncGenerator[Union[str, bytes], None]):
     error_message = None
@@ -203,7 +264,7 @@ def main():
 
     @api_app.get("/processing-url")
     async def get_processing_url():
-        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true&resize=scale")
+        http_display_url = os.getenv("HTTP_DISPLAY_URL", "http://localhost:6080/vnc.html?autoconnect=true&resize=scale&reconnect_delay=1000")
 
         if http_display_url:
             return JSONResponse(
