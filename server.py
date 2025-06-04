@@ -42,14 +42,14 @@ NO_VNC_PORT = os.getenv("NO_VNC_PORT", 6080)
 CHROME_DEBUG_PORT = os.getenv("CHROME_DEBUG_PORT", 9222)
 
 # retry a process until it done with exit code = 0 or forever auto restart it
-async def observe_process(command: str, app_signal: asyncio.Event, auto_restart: bool = True, pending_restart: float = 1):
+async def observe_process(command: str, app_signal: asyncio.Event, auto_restart: bool = True, restart_delay: float = 10):
     while not app_signal.is_set():
         logger.info(f"Executing {command!r}")
 
         process = await asyncio.create_subprocess_shell(
             command,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
             shell=True,
             executable="/bin/bash"
         )
@@ -57,30 +57,27 @@ async def observe_process(command: str, app_signal: asyncio.Event, auto_restart:
         task = asyncio.create_task(process.wait())
 
         while not app_signal.is_set():
-            done_process, pending_process = await asyncio.wait(
+            done_processes, _ = await asyncio.wait(
                 [task], 
                 timeout=1
             )
 
-            if len(done_process) > 0:
-                process: asyncio.subprocess.Process = done_process[0]
-    
-                if process.returncode == 0:
+            done_processes = list(done_processes)
+
+            if len(done_processes) > 0:
+                if done_processes[0].result() == 0:
                     if not auto_restart:
+                        logger.info(f"Command {command!r} finished successfully, not auto restarting")
                         return
 
-        logger.info(f"App signal is set, killing process {process.pid} (running: {command!r})")
+                logger.info(f"Command {command!r} finished with non-zero exit code, auto restarting")
+                break
 
-        try:
-            process.kill()
+        if not app_signal.is_set():
+            await asyncio.sleep(restart_delay)
 
-            if returncode := await task:
-                logger.info(f"Process {process.pid} exited with code {returncode}")
+    logger.info(f"App signal is set, command {command!r} exited")
 
-        except Exception as err:
-            logger.error(f"Exception raised while killing process: {err}", stack_info=True)
-
-        await asyncio.sleep(pending_restart)
 
 
 @asynccontextmanager
@@ -113,7 +110,7 @@ async def lifespan(app: fastapi.FastAPI):
 
     tasks.append(asyncio.create_task(
         observe_process(
-            'bash /scripts/x11-setup.sh',
+            'bash scripts/x11-setup.sh',
             app_signal,
             auto_restart=False
         )
